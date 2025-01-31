@@ -1,6 +1,7 @@
 version: '3.8'
 
-services:  # <-- All services MUST be nested here
+services:
+  # Web Tier (Nginx)
   web:
     image: nginx:alpine
     ports:
@@ -12,6 +13,7 @@ services:  # <-- All services MUST be nested here
     depends_on:
       - app
 
+  # Application Tier (Node.js + PM2)
   app:
     build: ./app
     environment:
@@ -20,14 +22,21 @@ services:  # <-- All services MUST be nested here
       - DB_USER=appuser
       - DB_PASSWORD=apppass
       - DB_NAME=mydb
+      - REDIS_HOST=redis        # Redis connection
+      - ELASTICSEARCH_HOST=es   # Elasticsearch connection
     networks:
       - app-network
       - db-network
     depends_on:
       mysql:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      es:
+        condition: service_healthy
 
-  mysql:  # <-- This MUST be under the `services` key
+  # Database Tier (MySQL)
+  mysql:
     image: mysql:8.0
     environment:
       - MYSQL_ROOT_PASSWORD=secret
@@ -45,8 +54,43 @@ services:  # <-- All services MUST be nested here
       timeout: 10s
       retries: 5
 
+  # Redis Tier (Caching)
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass redispass  # Set password
+    volumes:
+      - redis-data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf  # Optional config
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redispass", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Elasticsearch Tier (Search)
+  es:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.9.0
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m  # Adjust heap size
+      - ELASTIC_PASSWORD=elasticpass    # Default user: elastic
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+      - ./elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-u", "elastic:elasticpass", "http://localhost:9200/_cluster/health?pretty"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
 volumes:
   mysql-data:
+  redis-data:
+  es-data:
 
 networks:
   app-network:
